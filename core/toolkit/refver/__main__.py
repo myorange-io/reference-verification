@@ -10,6 +10,7 @@
   python3 -m refver audit <report.json>        심판의 기계 점검
   python3 -m refver validate <report.json>     리포트 계약 위반 확인
   python3 -m refver render   <report.json>     사람이 읽는 마크다운 생성
+  python3 -m refver render   <report.json> -o r.html   건네는 HTML 생성
 """
 from __future__ import annotations
 
@@ -174,12 +175,14 @@ def cmd_render(a) -> int:
         for e in errs[:10]:
             print(f"  - {e}", file=sys.stderr)
         return 1
-    md = R.render(rep)
+    # 확장자가 .html이면 HTML로 낸다. 낼 형식을 두 번 말하게 하지 않는다.
+    as_html = a.html or (a.out or "").lower().endswith((".html", ".htm"))
+    text = R.render_html(rep) if as_html else R.render(rep)
     if a.out:
-        open(a.out, "w", encoding="utf-8").write(md)
-        print(f"작성: {a.out}")
+        open(a.out, "w", encoding="utf-8").write(text)
+        print(f"작성: {a.out}" + (" (HTML)" if as_html else ""))
     else:
-        print(md)
+        print(text)
     return 0
 
 
@@ -253,9 +256,12 @@ def main(argv=None) -> int:
     s.add_argument("report")
     s.set_defaults(fn=cmd_validate)
 
-    s = sub.add_parser("render", help="report.json → 마크다운 리포트")
+    s = sub.add_parser("render", help="report.json → 마크다운 리포트 (또는 HTML)")
     s.add_argument("report")
     s.add_argument("-o", "--out")
+    s.add_argument("--html", action="store_true",
+                   help="건네는 HTML로 낸다 — 파일 하나, 딸린 것 없음. "
+                        "-o 가 .html 로 끝나면 저절로 켜진다")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_render)
 

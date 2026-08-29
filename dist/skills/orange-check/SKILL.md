@@ -678,6 +678,33 @@ open("참고문헌_검증리포트.md","w",encoding="utf-8").write(render(rep))
 - 1·2단계는 **같은 번호**를 쓴다
 - (FAIL + MISMATCH + NOT_SUPPORTED + PARTIAL) ÷ 전체 > 30%면 근거 전면 재작성을 권고한다
 
+### 건네는 리포트 — HTML
+
+마크다운은 저장소에 두고 읽기 좋고, HTML은 **문서를 쓴 사람에게 그대로 건네기** 좋다.
+받는 쪽이 판독기를 따로 열 필요가 없고, 브라우저에서 그대로 인쇄하거나 PDF로
+내보낼 수 있다. 마지막에 한 벌 더 낸다.
+
+```bash
+python3 -m refver render report.json -o 참고문헌_검증리포트.html
+```
+
+`-o`가 `.html`로 끝나면 HTML로 낸다. 못박고 싶으면 `--html`을 붙인다.
+셸이 없는 환경에서는 파이썬으로 같은 것을 낸다.
+
+```python
+from refver.report import load, validate, render_html
+rep = load("report.json"); assert not validate(rep)
+open("참고문헌_검증리포트.html","w",encoding="utf-8").write(render_html(rep))
+```
+
+파일 하나에 스타일까지 들어 있어 딸린 것이 없다. 밖으로 아무것도 불러오지 않으므로
+망이 막힌 자리에서도 그대로 열린다. 판정에는 색이 붙고(일치·부분적·뒷받침 안 됨),
+'사람이 확인해야 할 항목'은 읽으며 실제로 체크할 수 있다.
+
+**HTML은 마크다운을 옮긴 것이다.** 판정도 근거도 여기서 다시 만들지 않는다.
+`report.json → 마크다운 → HTML` 한 줄기뿐이라 세 벌이 어긋날 자리가 없다.
+세 파일을 함께 건넨다 — 기계가 읽는 정본, 저장소에 남길 것, 사람에게 보낼 것.
+
 ---
 
 ## 참고 문서

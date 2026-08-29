@@ -83,8 +83,13 @@ claude.ai는 zip 하나에 스킬 하나만 들어 있어야 받아 줍니다. �
 Claude Code에서는 `/orange-check`, Codex에서는 `$orange-check`을 칩니다.
 두 곳 모두 **폴더 이름이 곧 부르는 이름**이라 `orange-check` 폴더를 그대로 두어야 합니다.
 
-`report.json`과 `참고문헌_검증리포트.md`가 나옵니다. 앞은 기계가 읽는 정본이고 뒤는
-사람이 읽는 것인데, 마크다운을 JSON에서 만들어 내므로 둘이 어긋날 일이 없습니다.
+`report.json`, `참고문헌_검증리포트.md`, `참고문헌_검증리포트.html` 세 개가 나옵니다.
+첫째는 기계가 읽는 정본, 둘째는 저장소에 남길 것, 셋째는 문서를 쓴 사람에게 그대로
+건넬 것입니다. HTML은 파일 하나로 끝나고 밖에서 불러오는 것이 없어 그냥 열면 보이고,
+브라우저에서 그대로 인쇄하거나 PDF로 내보낼 수 있습니다.
+
+세 벌을 각각 쓰는 것이 아니라 `report.json → 마크다운 → HTML` 한 줄기로 만들어 내므로
+서로 어긋날 일이 없습니다.
 
 ### 왜 하나로 충분한가
 
@@ -366,6 +371,7 @@ python3 -m refver find 출처.pdf "확인할 문장"              # 쪽·줄 (�
 python3 -m refver count 출처.pdf 저소득 한부모            # 안 나오면 그것도 증거
 python3 -m refver validate report.json                   # 리포트 계약 검사
 python3 -m refver render report.json -o 검증리포트.md      # 사람이 읽을 리포트 만들기
+python3 -m refver render report.json -o 검증리포트.html    # 건네줄 HTML (파일 하나로 끝남)
 ```
 
 ### 한글 문서 읽기
