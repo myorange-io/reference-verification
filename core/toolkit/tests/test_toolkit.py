@@ -553,6 +553,87 @@ def test_report():
     check("report.json에서 만들어졌다" in md, "손으로 고치지 말라는 안내가 들어간다")
 
 
+def test_render_html():
+    """건네는 HTML. 마크다운과 어긋나면 안 되고, 본문에서 온 글자가 태그가 되면 안 된다."""
+    print("\n건네는 HTML")
+    from html.parser import HTMLParser
+
+    VOID = {"meta", "br", "hr", "img", "input", "link"}
+
+    class WF(HTMLParser):
+        """태그 짝이 맞는지만 본다. 안 맞는 HTML은 브라우저마다 다르게 무너진다."""
+
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.stack, self.errs = [], []
+
+        def handle_starttag(self, tag, attrs):
+            if tag not in VOID:
+                self.stack.append(tag)
+
+        def handle_endtag(self, tag):
+            if not self.stack or self.stack[-1] != tag:
+                self.errs.append(f"</{tag}>")
+            else:
+                self.stack.pop()
+
+    rep = R.new_report("제안서.docx", "chatgpt-work")
+    rep["run"]["degraded"] = True
+    rep["run"]["degraded_reasons"] = ["원문 3종을 받지 못했다", "독립 재검증을 못 했다"]
+    rep["citations"] = [{
+        "id": "C01", "claim": '주장에 <, & 와 "따옴표"가 들어 있다.', "doc_locator": "body:3",
+        "cited_source": {"authors": "<script>alert(1)</script>", "year": "2025",
+                         "title": "제목"},
+        "stage1": {"verdict": "MISMATCH", "tier": "T1", "mismatch_fields": ["year"]},
+        "stage2": {"verdict": "PARTIAL", "pattern": "overreach",
+                   "slots": {"who": {"claimed": "저소득 한부모", "source": "한부모 전체",
+                                     "match": False},
+                             "when": {"claimed": "2024년", "source": "2024년", "match": True}},
+                   "evidence": [{"source_id": "S01", "page": 2, "line": 14,
+                                 "quote": "원문 문장"}]},
+        "tier_violation": False,
+        "replacement": {"action": "fix_biblio", "citation": "기관, 2025, 제목",
+                        "tier": "T1", "url": "https://x.example/a?b=1&c=2",
+                        "supports": "근거"},
+    }, {
+        "id": "C02", "claim": "원문을 못 구한 주장이다.", "doc_locator": "body:9",
+        "cited_source": {"authors": "나", "year": "2025"},
+        "stage1": {"verdict": "UNVERIFIABLE", "tier": "T2"},
+        "stage2": {"verdict": "INSUFFICIENT_EVIDENCE", "pattern": "none"},
+        "tier_violation": False,
+    }]
+
+    h = R.render_html(rep)
+    w = WF()
+    w.feed(h)
+    w.close()
+    check(not w.errs and not w.stack,
+          f"태그 짝이 맞는다 (안 맞음 {w.errs}, 안 닫힘 {w.stack})")
+
+    check(h.startswith("<!doctype html>") and 'lang="ko"' in h, "문서 선언과 언어가 붙는다")
+    check("<style>" in h and "http://" not in h and "https://x" in h,
+          "스타일이 파일 안에 있고 밖에서 불러오는 것이 없다")
+
+    # 본문에서 온 글자가 태그가 되면 안 된다. 검증 대상 문서는 남이 쓴 것이다.
+    check("&lt;script&gt;alert(1)&lt;/script&gt;" in h and "<script>" not in h,
+          "출처 필드의 태그를 이스케이프한다")
+    check("&amp;" in h and "b=1&amp;c=2" in h, "주장과 URL 의 & 를 이스케이프한다")
+
+    # 마크다운과 같은 말을 해야 한다 — 두 벌이 어긋나면 어느 쪽이 진실인지 알 수 없다.
+    md = R.render(rep)
+    for word in ("서지 불일치", "부분적", "과확장", "서지를 고칠 것", "근거 부족"):
+        check(word in md and word in h, f"마크다운과 HTML이 같은 말을 쓴다: {word}")
+
+    check('<span class="v bad">×</span>' in h and '<span class="v ok">○</span>' in h,
+          "슬롯 일치 여부에 색이 붙는다")
+    check('<th><span class="v ok">일치</span></th>' not in h,
+          "열 제목에는 판정 색이 붙지 않는다 — 슬롯 표 제목 '일치'가 PASS와 글자가 같다")
+    check("<blockquote>" in h and "<ul>" in h.split("<blockquote>")[1].split("</blockquote>")[0],
+          "못 한 일이 인용부호 안 목록으로 남는다")
+    check('<input type="checkbox">' in h, "사람이 확인할 항목은 실제로 체크할 수 있다")
+    check("<table>" in h and "<th>" in h, "표가 표로 나온다")
+
+
 def test_judge():
     """심판의 기계 점검이 흠을 실제로 잡는지 — 흠을 심어 확인한다."""
     print("\n심판 기계 점검")
@@ -647,6 +728,7 @@ def main() -> int:
     test_judge_replacement_scope()
     test_pdf()
     test_report()
+    test_render_html()
     test_judge()
     print()
     if FAILS:

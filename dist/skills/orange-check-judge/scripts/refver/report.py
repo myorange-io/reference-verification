@@ -2,10 +2,15 @@
 
 사람이 읽는 마크다운 리포트는 report.json에서 **생성**한다. 손으로 쓰지 않는다.
 두 벌을 각각 쓰면 반드시 어긋나고, 어긋난 순간 어느 쪽이 진실인지 알 수 없게 된다.
+
+건네는 HTML은 그 마크다운을 옮긴 것이다. 같은 이유로 줄기를 하나만 둔다 —
+report.json → 마크다운 → HTML.
 """
 from __future__ import annotations
 
+import html
 import json
+import re
 from datetime import datetime, timezone
 
 SCHEMA_VERSION = "refver-report/1.0"
@@ -235,6 +240,193 @@ def render(report: dict) -> str:
           f"자동 생성 — `refver render` (schema {report.get('schema_version', SCHEMA_VERSION)}). "
           "이 파일은 report.json에서 만들어졌다. 직접 고치지 말고 report.json을 고쳐 다시 생성하라."]
     return "\n".join(L)
+
+
+# ───────────────────────────────────────────────────────────── HTML 렌더
+#
+# HTML은 마크다운을 옮긴 것이다. 판정도 근거도 여기서 다시 만들지 않는다.
+# 세 벌을 각각 쓰면 어긋나고, 어긋난 순간 어느 쪽이 진실인지 알 수 없게 된다 —
+# report.json → 마크다운 → HTML 한 줄기만 둔다.
+
+# 판정을 색으로 알아보게 한다. 이름을 다시 적지 않고 VERDICT_KO에서 끌어온다 —
+# 여기만 손으로 적어 두면 판정 이름을 고칠 때 조용히 어긋난다.
+TONE = {"PASS": "ok", "SUPPORTED": "ok",
+        "MISMATCH": "warn", "PARTIAL": "warn",
+        "FAIL": "bad", "NOT_SUPPORTED": "bad",
+        "UNVERIFIABLE": "muted", "NOT_APPLICABLE": "muted",
+        "INSUFFICIENT_EVIDENCE": "muted"}
+BADGE = {VERDICT_KO[k]: v for k, v in TONE.items()}
+BADGE.update({"○": "ok", "×": "bad"})
+
+_SEP = re.compile(r"^\|[\s:|-]+\|$")
+_HEAD = re.compile(r"^(#{1,4})\s+(.*)$")
+_TASK = re.compile(r"^\[([ xX])\]\s*(.*)$")
+
+
+def _inline(s: str) -> str:
+    """리포트가 쓰는 인라인 표시는 굵게와 코드뿐이다. 이스케이프가 먼저다."""
+    s = html.escape(s, quote=False)
+    s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+
+
+def _cell(text: str, tag: str) -> str:
+    inner = _inline(text)
+    # 열 제목에는 색을 붙이지 않는다. 슬롯 표의 제목 '일치'는 판정 PASS와 글자가
+    # 같아서, 칸이면 다 칠하면 제목이 판정으로 보인다.
+    cls = BADGE.get(text) if tag == "td" else None
+    if cls:
+        inner = f'<span class="v {cls}">{inner}</span>'
+    return f"<{tag}>{inner}</{tag}>"
+
+
+def _table(rows: list[str]) -> str:
+    def cells(r: str) -> list[str]:
+        return [c.strip() for c in r.strip().strip("|").split("|")]
+    body = [r for r in rows if not _SEP.match(r)]
+    if not body:
+        return ""
+    out = ['<div class="scroll"><table><thead><tr>']
+    out += [_cell(c, "th") for c in cells(body[0])]
+    out.append("</tr></thead><tbody>")
+    for r in body[1:]:
+        out.append("<tr>" + "".join(_cell(c, "td") for c in cells(r)) + "</tr>")
+    out.append("</tbody></table></div>")
+    return "".join(out)
+
+
+def _task(text: str) -> str:
+    """`- [ ]` 는 확인할 목록이다. HTML에서는 읽으며 실제로 체크할 수 있게 둔다."""
+    m = _TASK.match(text)
+    if not m:
+        return _inline(text)
+    chk = " checked" if m.group(1).lower() == "x" else ""
+    return f'<label><input type="checkbox"{chk}> {_inline(m.group(2))}</label>'
+
+
+def _items(items: list[tuple[int, str]]) -> str:
+    """한 겹 들여쓴 목록까지만 — 렌더러가 만드는 것이 거기까지다."""
+    out, sub = ["<ul>"], False
+    for depth, text in items:
+        if depth and not sub and out[-1].endswith("</li>"):
+            out[-1] = out[-1][: -len("</li>")]      # 앞 항목을 닫지 않고 그 안에 넣는다
+            out.append("<ul>")
+            sub = True
+        elif not depth and sub:
+            out.append("</ul></li>")
+            sub = False
+        out.append(f"<li>{_task(text)}</li>")
+    if sub:
+        out.append("</ul></li>")
+    out.append("</ul>")
+    return "".join(out)
+
+
+def _blocks(md: str) -> str:
+    """render()가 내는 마크다운만큼만 읽는다 — 제목·표·인용·목록·구분선·문단."""
+    lines = md.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        s = lines[i].strip()
+        if not s:
+            i += 1
+            continue
+        if s == "---":
+            out.append("<hr>")
+            i += 1
+            continue
+        m = _HEAD.match(s)
+        if m:
+            lv = len(m.group(1))
+            out.append(f"<h{lv}>{_inline(m.group(2))}</h{lv}>")
+            i += 1
+            continue
+        if s.startswith("|"):
+            blk = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                blk.append(lines[i].strip())
+                i += 1
+            out.append(_table(blk))
+            continue
+        if s.startswith(">"):
+            blk = []
+            while i < len(lines) and lines[i].strip().startswith(">"):
+                blk.append(re.sub(r"^>\s?", "", lines[i].strip()))
+                i += 1
+            out.append(f"<blockquote>{_blocks(chr(10).join(blk))}</blockquote>")
+            continue
+        if s.startswith("- "):
+            lst: list[tuple[int, str]] = []
+            while i < len(lines) and lines[i].strip().startswith("- "):
+                ind = len(lines[i]) - len(lines[i].lstrip(" "))
+                lst.append((1 if ind >= 2 else 0, lines[i].strip()[2:]))
+                i += 1
+            out.append(_items(lst))
+            continue
+        out.append(f"<p>{_inline(s)}</p>")
+        i += 1
+    return "".join(out)
+
+
+CSS = """\
+:root{color-scheme:light dark;
+  --bg:#fff; --fg:#1c1b19; --muted:#6f6d67; --line:#e4e2dc; --soft:#faf9f6;
+  --ok:#2c6b41; --warn:#8a5a06; --bad:#a63329;}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#161513; --fg:#e9e7e1; --muted:#a09d95; --line:#332f2b; --soft:#1e1c1a;
+  --ok:#79c091; --warn:#e0ab53; --bad:#e88a80;}}
+*{box-sizing:border-box}
+body{margin:0; background:var(--bg); color:var(--fg);
+  font:16px/1.75 -apple-system,BlinkMacSystemFont,Pretendard,"Apple SD Gothic Neo",
+       "Noto Sans KR","Malgun Gothic",sans-serif;
+  word-break:keep-all; overflow-wrap:break-word}
+main{max-width:52rem; margin:0 auto; padding:3rem 1.25rem 6rem}
+h1{font-size:1.7rem; line-height:1.35; margin:0 0 2rem; padding-bottom:1rem;
+   border-bottom:2px solid var(--fg)}
+h2{font-size:1.25rem; margin:3rem 0 1rem}
+h3{font-size:1.05rem; margin:2.25rem 0 .75rem}
+p{margin:.75rem 0}
+ul{margin:.75rem 0; padding-left:1.35rem}
+li{margin:.35rem 0}
+li>ul{margin:.35rem 0}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.9em;
+  background:var(--soft); border:1px solid var(--line); border-radius:4px; padding:0 .3em}
+hr{border:0; border-top:1px solid var(--line); margin:3rem 0 1.5rem}
+blockquote{margin:1.25rem 0; padding:.85rem 1.1rem; background:var(--soft);
+  border-left:3px solid var(--warn); border-radius:0 6px 6px 0}
+blockquote>:first-child{margin-top:0}
+blockquote>:last-child{margin-bottom:0}
+.scroll{overflow-x:auto; margin:1rem 0}
+table{border-collapse:collapse; width:100%; font-size:.92rem}
+th,td{border-bottom:1px solid var(--line); padding:.5rem .6rem; text-align:left;
+  vertical-align:top}
+thead th{border-bottom:2px solid var(--line); white-space:nowrap; color:var(--muted);
+  font-weight:600}
+tbody tr:last-child td{border-bottom:0}
+.v{font-weight:600}
+.v.ok{color:var(--ok)} .v.warn{color:var(--warn)} .v.bad{color:var(--bad)}
+.v.muted{color:var(--muted)}
+label{display:inline-flex; gap:.5rem; align-items:baseline}
+input[type=checkbox]{accent-color:var(--warn)}
+@media print{
+  body{font-size:11pt}
+  main{max-width:none; padding:0}
+  h2,h3{break-after:avoid}
+  tr,li,blockquote{break-inside:avoid}}
+"""
+
+
+def render_html(report: dict) -> str:
+    """건네는 리포트. 파일 하나로 끝나고 딸린 것이 없다 — 망이 막혀도 그대로 열린다."""
+    doc = (report.get("document") or {}).get("filename", "(문서명 없음)")
+    return ("<!doctype html>\n"
+            '<html lang="ko">\n<head>\n<meta charset="utf-8">\n'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            f"<title>참고문헌 검증 리포트 — {html.escape(str(doc))}</title>\n"
+            f"<style>\n{CSS}</style>\n</head>\n<body>\n<main>\n"
+            + _blocks(render(report))
+            + "\n</main>\n</body>\n</html>\n")
 
 
 def load(path: str) -> dict:
